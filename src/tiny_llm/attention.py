@@ -13,8 +13,8 @@ def scaled_dot_product_attention_simple(
     scale_factor = 1 / math.sqrt((query.shape[-1])) if scale is None else scale
     attn_weight = (query @ key.swapaxes(-2, -1)) * scale_factor
     attn_weight = attn_weight + mask if mask is not None else attn_weight
-    attn_weight = softmax(attn_weight, -1)
-    return attn_weight @ value
+    attn_weight = softmax(attn_weight, -1) # (N, H, L, L)
+    return attn_weight @ value # (N, H, L, D)
 
 
 class SimpleMultiHeadAttention:
@@ -64,7 +64,7 @@ class SimpleMultiHeadAttention:
 
 
 def causal_mask(L: int, S: int, dtype: mx.Dtype) -> mx.array:
-    pass
+    return mx.triu(mx.full((L, S), float('-inf'), dtype=dtype), k = S - L + 1)
 
 
 def scaled_dot_product_attention_grouped(
@@ -74,7 +74,34 @@ def scaled_dot_product_attention_grouped(
     scale: float | None = None,
     mask: mx.array | str | None = None,
 ) -> mx.array:
-    pass
+    '''
+    H_q = n * n_repeats - even div
+    1. Reshape Q to isolate the group structure: from (N, H_q, L, D) to (N, H, n_repeats, L, D) where n_repeats = H_q // H
+    2. Expand K/V by inserting a size-1 dimension for n_repeats: from (N, H, S, D) to (N, H, 1, S, D)
+    3. matmul broadcasts — Q (N, H, n_repeats, L, D) @ K^T (N, H, 1, D, S) → (N, H, n_repeats, L, S). The 1 in K broadcasts across   n_repeats, so each group of Q heads sees the same K/V.
+    4. Apply scale, mask, softmax, second matmul — same as standard attention.
+    5. Reshape back to (N, H_q, L, D) by collapsing (H, n_repeats).
+    '''
+    batch_shape = key.shape[:-3]
+    H, S, D = key.shape[-3:]
+    H_q, L, _ = query.shape[-3:]
+    n_repeats = H_q // H
+    
+    Q = query.reshape(*batch_shape, H, n_repeats, L, D) # (N..., H, n_repeats, L, D)
+    K = key[..., None, :, :] # (N..., H, 1, S, D) -> will auto broadcast to (N..., H, n_repeats, S, D) in matmul
+    V = value[..., None, :, :] # (N..., H, 1, S, D)
+    
+    if isinstance(mask, str) and mask == "causal":
+        M = causal_mask(L, S, query.dtype)
+    elif mask is not None:
+        M = mask.reshape(*batch_shape, H, n_repeats, L, S)
+    else:
+        M = None
+
+    
+    attn_res = scaled_dot_product_attention_simple(Q, K, V, scale, M) # (N..., H, n_repeats, L, D)
+    
+    return attn_res.reshape(*batch_shape, H_q, L, D)
 
 
 def flash_attention(
