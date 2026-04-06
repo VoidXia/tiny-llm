@@ -33,6 +33,8 @@ class SimpleMultiHeadAttention:
         self.wk = wk
         self.wv = wv
         self.wo = wo
+        
+        self.head_dim = self.hidden_size // self.num_heads
 
     def __call__(
         self,
@@ -51,12 +53,13 @@ class SimpleMultiHeadAttention:
         attn_res = scaled_dot_product_attention_simple(
             query=query,
             key=key,
-            value=value
+            value=value,
+            mask=mask
         ) # N H L D
         
-        attn_res = attn_res.transpose(0, 2, 1, 3).reshape(N, L, self.num_heads*D)
+        attn_res = attn_res.transpose(0, 2, 1, 3).reshape(N, L, E)
         
-        return attn_res @ self.wo
+        return linear(attn_res, self.wo)
         
 
 
