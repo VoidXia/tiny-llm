@@ -19,13 +19,14 @@ class RoPE:
     def __call__(
         self, x: mx.array, offset: list[slice] | slice | None = None
     ) -> mx.array:
-        
+        if isinstance(offset, list):
+            offset = mx.array([list(range(s.start, s.stop)) for s in offset])
         if offset is None:
             freqs = self.freq[:x.shape[1]]  # (seq_len, dims//2)
         else:
             freqs = self.freq[offset]
-        cos_f = mx.cos(freqs)[:, None, :]
-        sin_f = mx.sin(freqs)[:, None, :] # (L, 1, D//2)
+        cos_f = mx.cos(freqs)[..., None, :]
+        sin_f = mx.sin(freqs)[..., None, :] # (L, 1, D//2)
         if self.traditional:
             x_pairs = x.reshape(*x.shape[:-1], self.dims // 2, 2)
             x1 = x_pairs[..., 0] # 0,2,4,6 ...

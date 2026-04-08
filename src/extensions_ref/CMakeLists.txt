@@ -47,6 +47,7 @@ target_include_directories(tiny_llm_ext_ref PUBLIC ${CMAKE_CURRENT_LIST_DIR} ${C
 target_link_libraries(tiny_llm_ext_ref PUBLIC mlx)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON) # so that clangd can pick this up
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
 # ----------------------------- Metal -----------------------------
 
