@@ -21,8 +21,10 @@ def simple_generate(
     def _step(model, y):
         output_logits = model(y)
         logits = output_logits[:, -1, :]
-        logits = softmax(logits)
-        return sampler(logits)
+        logprobs = logits - logsumexp(logits, axis=-1)
+        if sampler is not None:
+            return sampler(logprobs)
+        return mx.argmax(logprobs, axis=-1)
     
     tokenized_prompt = tokenizer._tokenizer.encode(prompt)
     while(True):
