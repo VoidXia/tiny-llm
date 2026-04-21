@@ -37,6 +37,6 @@ class RoPE:
         o1 = x1 * cos_f - x2 * sin_f
         o2 = x1 * sin_f + x2 * cos_f
         if self.traditional:
-            return mx.stack([o1, o2], axis=-1).reshape(x.shape) # [o1[0], o2[0], o1[1], o2[1], ...]
-        return mx.concat([o1, o2], axis=-1) # [o1[0], o1[1], ..., o2[0], o2[1], ...] 
+            return mx.stack([o1, o2], axis=-1).reshape(x.shape).astype(x.dtype) # [o1[0], o2[0], o1[1], o2[1], ...]
+        return mx.concat([o1, o2], axis=-1).astype(x.dtype) # [o1[0], o1[1], ..., o2[0], o2[1], ...]
             
