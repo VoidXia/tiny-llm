@@ -249,7 +249,7 @@ void QuantizedMatmul::eval_gpu(const std::vector<mx::array> &inputs, std::vector
     out.set_data(mx::allocator::malloc(out.nbytes()));
 
     // Make a kernel from this metal library
-    auto library = d.get_library("tiny_llm_ext_ref");
+    auto library = d.get_library("tiny_llm_ext");
     const char* kernel_name;
     if (a.dtype() == mx::float16) {
         kernel_name = "quantized_matmul_w4a16_g64_f16";
