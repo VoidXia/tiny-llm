@@ -1,6 +1,6 @@
 import mlx.core as mx
 from .basics import linear, silu
-from .attention import scaled_dot_product_attention_grouped
+from .attention import scaled_dot_product_attention_grouped, flash_attention
 from .layer_norm import RMSNorm
 from .positional_encoding import RoPE
 from typing import Any
@@ -40,6 +40,8 @@ class Qwen2MultiHeadAttention:
         self.D = self.hidden_size // self.num_heads
         
         self.rope = RoPE(self.D, max_seq_len, theta, traditional=False)
+        
+        self.use_flash_attention = use_flash_attention
 
     def __call__(
         self,
@@ -68,7 +70,14 @@ class Qwen2MultiHeadAttention:
         # k, v = cache.update_and_fetch(k, v) ; k/v: B, L, H, D, q: B, L', H, D
         k, v = cache.update_and_fetch(k, v)
         # x = scaled_dot_product_attention_grouped(q, k, v, scale, mask) -> B, L, H_q, D ; Do this at float32 precision
-        x = scaled_dot_product_attention_grouped(q.swapaxes(-3, -2), k.swapaxes(-3, -2), v.swapaxes(-3, -2), mask=mask) # B, H_q, L, D
+        orig_dtype = q.dtype
+        q32 = q.swapaxes(-3, -2).astype(mx.float32)
+        k32 = k.swapaxes(-3, -2).astype(mx.float32)
+        v32 = v.swapaxes(-3, -2).astype(mx.float32)
+        if self.use_flash_attention:
+            x = flash_attention(q32, k32, v32, mask=mask).astype(orig_dtype) # B, H_q, L, D
+        else:
+            x = scaled_dot_product_attention_grouped(q32, k32, v32, mask=mask).astype(orig_dtype) # B, H_q, L, D
         # (transpose as needed)
         # x = linear(x, wo) -> B, L, E
         x = quantized_linear(x.swapaxes(-3, -2).reshape(B, L, H_q*D), self.wo)
@@ -125,7 +134,7 @@ class Qwen2TransformerBlock:
         self.H = num_kv_heads
         self.E = hidden_size
         self.D = self.E // self.H_q
-        self.attn = Qwen2MultiHeadAttention(self.E, self.H_q, self.H, wq, wk, wv, wo, bq, bk, bv, max_seq_len, theta)
+        self.attn = Qwen2MultiHeadAttention(self.E, self.H_q, self.H, wq, wk, wv, wo, bq, bk, bv, max_seq_len, theta, use_flash_attention=use_flash_attention)
         self.mlp = Qwen2MLP(self.D, intermediate_size, w_gate, w_up, w_down)
         self.input_layernorm = RMSNorm(self.E, w_input_layernorm, rms_norm_eps)
         self.post_attn_layernorm = RMSNorm(self.E, w_post_attention_layernorm, rms_norm_eps)
@@ -176,7 +185,8 @@ class Qwen2ModelWeek2:
             w_input_layernorm= self.model.model.layers[i].input_layernorm.weight,
             w_post_attention_layernorm= self.model.model.layers[i].post_attention_layernorm.weight,
             max_seq_len= self.model.args.max_position_embeddings,
-            theta= self.model.args.rope_theta
+            theta= self.model.args.rope_theta,
+            use_flash_attention=enable_flash_attn
         ) for i in range(self.model.args.num_hidden_layers)]
         self.rmsnorm = RMSNorm(self.model.args.hidden_size, self.model.model.norm.weight, self.model.model.norm.eps)
 
