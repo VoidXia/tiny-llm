@@ -95,7 +95,8 @@ def scaled_dot_product_attention_grouped(
     if isinstance(mask, str) and mask == "causal":
         M = causal_mask(L, S, query.dtype)
     elif mask is not None:
-        M = mask.reshape(*batch_shape, H, n_repeats, L, S)
+        M = mx.broadcast_to(mask, (*batch_shape, H_q, L, S)) # (B, 1, L, S) -> (B, H_q, L, S)
+        M = M.reshape(*batch_shape, H, n_repeats, L, S) # (B, H_q, L, S) -> (B, H, n_repeats, L, S)
     else:
         M = None
 
