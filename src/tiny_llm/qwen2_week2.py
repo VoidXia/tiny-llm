@@ -68,12 +68,16 @@ class Qwen2MultiHeadAttention:
         k = self.rope(k, offset=[slice(i, i + L) for i in offsets])
         # (transpose as needed)
         # k, v = cache.update_and_fetch(k, v) ; k/v: B, L, H, D, q: B, L', H, D
-        k, v = cache.update_and_fetch(k, v)
+        q = q.swapaxes(-3, -2)
+        k = k.swapaxes(-3, -2)
+        v = v.swapaxes(-3, -2) # B H S D
+        k, v, _, _ = cache.update_and_fetch(k, v)
         # x = scaled_dot_product_attention_grouped(q, k, v, scale, mask) -> B, L, H_q, D ; Do this at float32 precision
+        q32 = q.astype(mx.float32)
+        k32 = k.astype(mx.float32)
+        v32 = v.astype(mx.float32)
+        
         orig_dtype = q.dtype
-        q32 = q.swapaxes(-3, -2).astype(mx.float32)
-        k32 = k.swapaxes(-3, -2).astype(mx.float32)
-        v32 = v.swapaxes(-3, -2).astype(mx.float32)
         if self.use_flash_attention:
             x = flash_attention(q32, k32, v32, mask=mask).astype(orig_dtype) # B, H_q, L, D
         else:
