@@ -62,16 +62,20 @@ class Qwen2MultiHeadAttention:
         k = quantized_linear(x, self.wk, self.bk).reshape(B, L, H, D)
         # v = linear(x, wv, bv) -> B, L, H, D
         v = quantized_linear(x, self.wv, self.bv).reshape(B, L, H, D)
+        if isinstance(offsets, int):
+            offset_slice = [slice(int(offsets), int(offsets + L))]
+        else:
+            offset_slice = [slice(int(i), int(i + L)) for i in offsets]
         # q = rope(q, offset=slice(0, L))
-        q = self.rope(q, offset=[slice(i, i + L) for i in offsets])
+        q = self.rope(q, offset=offset_slice)
         # k = rope(k, offset=slice(0, L))
-        k = self.rope(k, offset=[slice(i, i + L) for i in offsets])
+        k = self.rope(k, offset=offset_slice)
         # (transpose as needed)
         # k, v = cache.update_and_fetch(k, v) ; k/v: B, L, H, D, q: B, L', H, D
         q = q.swapaxes(-3, -2)
         k = k.swapaxes(-3, -2)
         v = v.swapaxes(-3, -2) # B H S D
-        k, v, _, _ = cache.update_and_fetch(k, v)
+        k, v, _, batched_mask = cache.update_and_fetch(k, v, L, mask)
         # x = scaled_dot_product_attention_grouped(q, k, v, scale, mask) -> B, L, H_q, D ; Do this at float32 precision
         q32 = q.astype(mx.float32)
         k32 = k.astype(mx.float32)
@@ -79,9 +83,9 @@ class Qwen2MultiHeadAttention:
         
         orig_dtype = q.dtype
         if self.use_flash_attention:
-            x = flash_attention(q32, k32, v32, mask=mask).astype(orig_dtype) # B, H_q, L, D
+            x = flash_attention(q32, k32, v32, mask=batched_mask).astype(orig_dtype) # B, H_q, L, D
         else:
-            x = scaled_dot_product_attention_grouped(q32, k32, v32, mask=mask).astype(orig_dtype) # B, H_q, L, D
+            x = scaled_dot_product_attention_grouped(q32, k32, v32, mask=batched_mask).astype(orig_dtype) # B, H_q, L, D
         # (transpose as needed)
         # x = linear(x, wo) -> B, L, E
         x = quantized_linear(x.swapaxes(-3, -2).reshape(B, L, H_q*D), self.wo)
@@ -203,7 +207,7 @@ class Qwen2ModelWeek2:
         x = inputs
         x = self.embedding(x)
         for i in range(self.model.args.num_hidden_layers):
-            x = self.transformer[i](x, offset=[offset], cache=cache[i], mask = "causal" if inputs.size > 1 else None)
+            x = self.transformer[i](x, offset=offset, cache=cache[i], mask = "causal" if inputs.size > 1 else None)
         x = self.rmsnorm(x)
         x = self.embedding.as_linear(x) if self.model.args.tie_word_embeddings else quantized_linear(x, QuantizedWeights.from_mlx_layer(self.model.lm_head))
         return x

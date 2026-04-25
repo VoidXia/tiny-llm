@@ -58,7 +58,7 @@ class BatchingKvCache(TinyKvCache):
             # [i] would not preserve first dim but [i:i+1] would keep shape (1, ...)
             S = max(S, S_i[i]) # S_i is the after append token size
         B, H, _, D = keys.shape
-        mask = mx.full((B, 1, mask_length, S), -mx.inf, dtype=keys.dtype)
+        out_mask = mx.full((B, 1, mask_length, S), -mx.inf, dtype=keys.dtype)
         self.batched_keys = mx.zeros((B, H, S, D), dtype=keys.dtype)
         self.batched_values = mx.zeros((B, H, S, D), dtype=keys.dtype) # B H S D
         for i in range(self.max_active_requests):
@@ -66,8 +66,11 @@ class BatchingKvCache(TinyKvCache):
                 continue
             self.batched_keys[i, :, (S - S_i[i]):S, :] = self.slots[i].key[0]
             self.batched_values[i, :, (S - S_i[i]):S, :] = self.slots[i].value[0]
-            mask[i, :, :, (S - S_i[i]):S] = causal_mask(mask_length, S_i[i], dtype=keys.dtype)
-        return self.batched_keys, self.batched_values, None, mask
+            if mask == None or mask == "causal":
+                out_mask[i, :, :, (S - S_i[i]):S] = causal_mask(mask_length, S_i[i], dtype=keys.dtype)
+            else:
+                out_mask[i, :, :, (S - S_i[i]):S] = mask
+        return self.batched_keys, self.batched_values, None, out_mask
 
     def add_request(self, prefilled: TinyKvCache, id: int):
         self.slots[id] = prefilled
