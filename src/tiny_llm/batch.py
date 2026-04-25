@@ -46,13 +46,19 @@ class Request:
         if self.is_prefill_done:
             raise ValueError("prefill called after done")
         # TODO: in task 4, prefill the full request at once; in task 5, prefill a chunk at a time
-        token = self.prefill_tokens.reshape(1, -1) # L tokens -> (B=1, L=L) shape
-        self.next_token = _step(self.model, token, self.offset, self.kv_cache)
-        self.offset = self.prefill_tokens.size
         
-        self.decode_done(self.next_token.item(), update_offset=False) # we need to add the prefilled first next token to detokenizer
-        
-        self.is_prefill_done = True
+        if self.prefill_tokens.size - self.offset > self.prefill_max_step:
+            token = self.prefill_tokens[self.offset:self.offset+self.prefill_max_step].reshape(1, -1)
+            self.next_token = _step(self.model, token, self.offset, self.kv_cache)
+            mx.eval(*[c.key for c in self.kv_cache], *[c.value for c in self.kv_cache])
+            self.offset += self.prefill_max_step
+        else:
+            token = self.prefill_tokens[self.offset:].reshape(1, -1) # L tokens -> (B=1, L=L) shape
+            self.next_token = _step(self.model, token, self.offset, self.kv_cache)
+            mx.eval(*[c.key for c in self.kv_cache], *[c.value for c in self.kv_cache])
+            self.offset = self.prefill_tokens.size
+            self.decode_done(self.next_token.item(), update_offset=False) # we need to add the prefilled first next token to detokenizer
+            self.is_prefill_done = True
 
     def decode_done(self, token, update_offset=True):
         if self.is_done:
