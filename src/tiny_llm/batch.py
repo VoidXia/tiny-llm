@@ -46,6 +46,13 @@ class Request:
         if self.is_prefill_done:
             raise ValueError("prefill called after done")
         # TODO: in task 4, prefill the full request at once; in task 5, prefill a chunk at a time
+        token = self.prefill_tokens.reshape(1, -1) # L tokens -> (B=1, L=L) shape
+        self.next_token = _step(self.model, token, self.offset, self.kv_cache)
+        self.offset = self.prefill_tokens.size
+        
+        self.decode_done(self.next_token.item(), update_offset=False) # we need to add the prefilled first next token to detokenizer
+        
+        self.is_prefill_done = True
 
     def decode_done(self, token, update_offset=True):
         if self.is_done:
@@ -54,6 +61,10 @@ class Request:
             self.is_done = True
             return
         # TODO: update the offset and add the token to the detokenizer
+        if update_offset:
+            self.offset += 1
+        self.detokenizer.add_token(token)
+        self.next_token = mx.array([int(token)])
 
     def text(self):
         return self.detokenizer.text
@@ -136,7 +147,14 @@ def batch_generate(
                 made_progress = True
             if pending_prefill_request.is_prefill_done:
                 # Implement this: find an idle slot and add the request to the decode requests
-                pass
+                for slot in range(batch_size):
+                    if is_idle[slot]:
+                        for layer_idx, kv in enumerate(kv_cache):
+                            kv.add_request(pending_prefill_request.kv_cache[layer_idx], slot)
+                        decode_requests[slot] = pending_prefill_request
+                        is_idle[slot] = False
+                        pending_prefill_request = None # ?
+                        break
             if made_progress:
                 _print_progress(
                     decode_requests,
@@ -152,13 +170,35 @@ def batch_generate(
         if not all(is_idle):
             next_tokens = []
             offsets = []
-            # TODO: collect the next tokens and offsets from the decode requests
+            # TODO: GATHER: collect the next tokens and offsets from the decode requests
+            for i in range(batch_size):
+                if is_idle[i]:
+                    next_tokens.append(0)
+                    offsets.append(0)
+                else:
+                    next_tokens.append(decode_requests[i].next_token.item())
+                    offsets.append(decode_requests[i].offset)
+            next_tokens = mx.array(next_tokens, dtype=mx.int32)
+            offsets = mx.array(offsets, dtype=mx.int32)
+            # DECODE
             next_tokens = _step(model, next_tokens.reshape(-1, 1), offsets, kv_cache)
             for i in range(batch_size):
-                # TODO: check if the decode has finished by comparing EOS or the seqlength. If so,
+                # TODO: DISPATCH: check if the decode has finished by comparing EOS or the seqlength. If so,
                 # remove the request from the decode requests and add the result to the result list;
                 # otherwise, call `decode_done` to update the offset and add the token to the detokenizer
-                pass
+                # i here is the Batch ID not Req ID.
+                if is_idle[i]:
+                    continue
+                tok = next_tokens[i].item()
+                req = decode_requests[i]
+                req.decode_done(tok)
+                if req.is_done or req.offset >= max_seq_len:
+                    result.append((req.prompt_idx, req.text()))
+                    for kv in kv_cache:
+                        kv.remove_request(i)
+                    decode_requests[i] = None
+                    is_idle[i] = True
+                    
             _print_progress(
                 decode_requests,
                 is_idle,
