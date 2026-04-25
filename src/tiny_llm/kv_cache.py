@@ -101,4 +101,4 @@ class TinyKvFullCache(TinyKvCache):
         else:
             self.value = mx.concatenate([self.value, value], axis=-2)
         self.offset = self.key.shape[-2]
-        return self.key, self.value, self.key.shape[-2], None
+        return self.key, self.value, self.key.shape[-2], mask
